@@ -1,17 +1,30 @@
 [project]
-name = "p8"
+name = "app"
 version = "0.1.0"
-description = "Add your description here"
+description = "Credit scoring API"
 readme = "README.md"
 authors = [
     { name = "Paul Larribet", email = "plarribet@me.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.142.2",
+    "joblib>=1.6.0",
+    "lightgbm>=4.7.0",
+    "pandas>=3.0.6",
+    "scikit-learn>=1.9.1",
+    "uvicorn>=0.54.0",
+]
 
 [project.scripts]
-p8 = "p8:main"
+app = "app:main"
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]

@@ -1,0 +1,50 @@
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+payload = {
+    "EXT_SOURCE_3": 0.1393757800997895,
+    "CLOSED_AMT_CREDIT_SUM_DEBT_MEAN": 51881.85,
+    "CLOSED_AMT_CREDIT_SUM_DEBT_SUM": 62219.7,
+    "CLOSED_AMT_CREDIT_SUM_DEBT_MAX": 62219.7,
+    "BURO_DAYS_CREDIT_MEAN": -772.6666666666667,
+    "BURO_DAYS_CREDIT_ENDDATE_MIN": -435.4,
+    "CC_MONTHS_BALANCE_VAR": 732.6,
+    "BURO_DAYS_CREDIT_MIN": -1444.0,
+    "CLOSED_DAYS_CREDIT_ENDDATE_MIN": -876.6,
+    "ACTIVE_DAYS_CREDIT_MIN": -731.6,
+    "CC_AMT_PAYMENT_CURRENT_MIN": 7931.835000000001,
+    "CC_AMT_PAYMENT_CURRENT_MEAN": 15755.9175,
+    "CC_AMT_DRAWINGS_POS_CURRENT_MIN": 694.6020000000001,
+    "REFUSED_APP_CREDIT_PERC_MEAN": 0.7886358501628111,
+    "REFUSED_APP_CREDIT_PERC_MIN": 0.7886358501628111,
+    "REFUSED_APP_CREDIT_PERC_MAX": 0.7886358501628111,
+    "APPROVED_APP_CREDIT_PERC_VAR": 0.00224587158067247,
+    "CC_AMT_PAYMENT_TOTAL_CURRENT_MIN": 5951.835,
+    "CC_AMT_PAYMENT_CURRENT_MAX": 23580.0,
+    "CC_AMT_PAYMENT_TOTAL_CURRENT_MEAN": 12798.657000000001,
+}
+
+
+def test_health():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_predict():
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "probability" in data
+    assert "prediction" in data
+    assert "threshold" in data
+
+    assert 0 <= data["probability"] <= 1
+    assert data["prediction"] in [0, 1]
