@@ -15,6 +15,7 @@ dependencies = [
     "plotly>=7.1.0",
     "scikit-learn>=1.9.1",
     "scipy>=1.18.1",
+    "shap>=0.52.0",
     "streamlit>=1.65.0",
     "uvicorn>=0.54.0",
 ]
