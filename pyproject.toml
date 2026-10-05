@@ -12,7 +12,10 @@ dependencies = [
     "joblib>=1.6.0",
     "lightgbm>=4.7.0",
     "pandas>=3.0.6",
+    "plotly>=7.1.0",
     "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "streamlit>=1.65.0",
     "uvicorn>=0.54.0",
 ]
 
