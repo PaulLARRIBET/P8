@@ -40,3 +40,35 @@ def test_predict():
     assert abs(
         result["threshold"] - expected["threshold"]
     ) < 1e-12
+
+def test_negative_amount_rejected():
+
+    with open(JSON_PATH, "r") as f:
+        expected = json.load(f)
+
+    payload = expected["features"].copy()
+
+    payload["CC_AMT_PAYMENT_CURRENT_MEAN"] = -100
+
+    response = client.post(
+        "/predict",
+        json=payload
+    )
+
+    assert response.status_code == 422
+
+def test_ext_source_out_of_range():
+
+    with open(JSON_PATH, "r") as f:
+        expected = json.load(f)
+
+    payload = expected["features"].copy()
+
+    payload["EXT_SOURCE_3"] = 1.5
+
+    response = client.post(
+        "/predict",
+        json=payload
+    )
+
+    assert response.status_code == 422

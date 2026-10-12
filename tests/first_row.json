@@ -21,7 +21,7 @@
         "CC_AMT_PAYMENT_CURRENT_MAX": 23220.0,
         "CC_AMT_PAYMENT_TOTAL_CURRENT_MEAN": 10998.657000000001
     },
-    "predict_proba": 0.05686984283426618,
-    "threshold": 0.082,
-    "prediction": 0
+    "predict_proba": 0.09322280814062694,
+    "threshold": 0.08600000000000001,
+    "prediction": 1
 }
