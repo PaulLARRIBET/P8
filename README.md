@@ -1,620 +1,380 @@
-# P8 — Credit Scoring API & MLOps
+# P8 — Credit Scoring & MLOps
 
-Ce projet met en production un modèle de scoring de crédit à travers une API FastAPI.
+**Prédire le risque de crédit, suivre les prédictions et expliquer les décisions du modèle.**
 
-L'objectif est de proposer une chaîne MLOps simple comprenant :
+Ce projet expose un modèle LightGBM à travers une API FastAPI et propose un dashboard Streamlit pour suivre son utilisation. Il réunit l’inférence, la journalisation SQLite, la détection de dérive des données et l’explicabilité SHAP, avec des tests automatisés et une image Docker.
 
-- un modèle de Machine Learning entraîné avec LightGBM ;
-- une API REST permettant d'obtenir un score de risque client ;
-- un seuil de classification métier sauvegardé avec le modèle ;
-- des tests unitaires automatisés ;
-- une conteneurisation Docker ;
-- un système de monitoring des prédictions ;
-- une analyse du Data Drift ;
-- un pipeline CI avec GitHub Actions.
+Projet réalisé dans le cadre du parcours OpenClassrooms — Projet 8.
 
----
+| Composant | Rôle |
+|---|---|
+| **FastAPI** | Valider les données client, calculer les scores et fournir les explications locales |
+| **SMOTE + LightGBM** | Pipeline de classification avec seuil métier sauvegardé |
+| **SQLite** | Conserver les requêtes de prédiction et leurs résultats |
+| **Streamlit + Plotly** | Explorer les scores, les classes et les latences |
+| **Evidently** | Comparer les données de référence aux données de production |
+| **SHAP** | Expliquer le modèle globalement et pour un client |
+| **Pytest · GitHub Actions · Docker** | Tester l’application et construire son image |
 
-## 1. Architecture du projet
+## Sommaire
 
-```text
-P8/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-│
-├── data/
-│   ├── reference.csv
-│   ├── x_test.csv
-│   └── production.db
-│
-├── model/
-│   └── model.pkl
-│
-├── monitoring/
-│   └── dashboard.py
-│
-├── scripts/
-│   └── send_x_test_to_api.py
-│
-├── src/
-│   └── app/
-│       ├── __init__.py
-│       ├── main.py
-│       ├── model.py
-│       └── monitoring.py
-│
-├── tests/
-│   ├── first_row.json
-│   ├── test_api.py
-│   └── test_model.py
-│
-├── .dockerignore
-├── .gitignore
-├── Dockerfile
-├── pyproject.toml
-├── uv.lock
-└── README.md
-```
+- [Démarrage rapide](#démarrage-rapide)
+- [Architecture](#architecture)
+- [Données et modèle](#données-et-modèle)
+- [API et exemples](#api-et-exemples)
+- [Dashboard de monitoring](#dashboard-de-monitoring)
+- [Explicabilité SHAP](#explicabilité-shap)
+- [Tests et intégration continue](#tests-et-intégration-continue)
+- [Exécution avec Docker](#exécution-avec-docker)
+- [Actualisation et dépannage](#actualisation-et-dépannage)
 
----
+## Démarrage rapide
 
-# 2. Modèle de Machine Learning
+### Prérequis
 
-Le modèle utilisé est un `LGBMClassifier`.
+- Python **3.12**, version utilisée en CI et dans Docker ;
+- `uv` pour installer les dépendances et exécuter les commandes ;
+- Docker si vous souhaitez lancer l’API dans un conteneur.
 
-Il a été sélectionné après comparaison de plusieurs approches de classification, notamment :
+Les commandes suivantes s’exécutent depuis la racine du projet.
 
-- Régression Logistique ;
-- Random Forest ;
-- LightGBM ;
-- LightGBM avec SMOTE.
-
-Les hyperparamètres du modèle LightGBM ont ensuite été optimisés avec Optuna.
-
-Le modèle prend en entrée 20 variables sélectionnées :
-
-```text
-EXT_SOURCE_3
-CLOSED_AMT_CREDIT_SUM_DEBT_MEAN
-CLOSED_AMT_CREDIT_SUM_DEBT_SUM
-CLOSED_AMT_CREDIT_SUM_DEBT_MAX
-BURO_DAYS_CREDIT_MEAN
-BURO_DAYS_CREDIT_ENDDATE_MIN
-CC_MONTHS_BALANCE_VAR
-BURO_DAYS_CREDIT_MIN
-CLOSED_DAYS_CREDIT_ENDDATE_MIN
-ACTIVE_DAYS_CREDIT_MIN
-CC_AMT_PAYMENT_CURRENT_MIN
-CC_AMT_PAYMENT_CURRENT_MEAN
-CC_AMT_DRAWINGS_POS_CURRENT_MIN
-REFUSED_APP_CREDIT_PERC_MEAN
-REFUSED_APP_CREDIT_PERC_MIN
-REFUSED_APP_CREDIT_PERC_MAX
-APPROVED_APP_CREDIT_PERC_VAR
-CC_AMT_PAYMENT_TOTAL_CURRENT_MIN
-CC_AMT_PAYMENT_CURRENT_MAX
-CC_AMT_PAYMENT_TOTAL_CURRENT_MEAN
-```
-
-Le modèle est stocké dans :
-
-```text
-model/model.pkl
-```
-
-Le fichier contient à la fois :
-
-- le modèle LightGBM ;
-- le seuil métier utilisé pour transformer la probabilité en classe.
-
-Exemple :
-
-```python
-artifact = {
-    "model": final_model,
-    "threshold": best_threshold
-}
-```
-
-Cela garantit que le modèle et son seuil sont toujours versionnés ensemble.
-
----
-
-# 3. Seuil métier
-
-Le seuil de classification n'est pas nécessairement égal à `0.5`.
-
-Il a été optimisé en prenant en compte une fonction de coût métier dans laquelle :
-
-```text
-Coût = 10 × FN + FP
-```
-
-avec :
-
-- `FN` : faux négatifs ;
-- `FP` : faux positifs.
-
-Un faux négatif est donc considéré comme 10 fois plus coûteux qu'un faux positif.
-
-La décision finale est calculée ainsi :
-
-```python
-prediction = int(probability >= threshold)
-```
-
----
-
-# 4. API FastAPI
-
-L'API permet d'envoyer les données d'un client et de récupérer :
-
-- sa probabilité de risque ;
-- sa classe prédite ;
-- le seuil utilisé ;
-- la latence de la requête.
-
-L'application se trouve dans :
-
-```text
-src/app/
-```
-
-## Lancer l'API
-
-Depuis la racine du projet :
-
-```bash
-uv run uvicorn app.main:app --app-dir src --reload
-```
-
-L'API est alors disponible sur :
-
-```text
-http://127.0.0.1:8000
-```
-
----
-
-## Documentation Swagger
-
-FastAPI génère automatiquement une documentation interactive.
-
-Elle est disponible sur :
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Elle permet notamment de tester directement l'endpoint `/predict`.
-
----
-
-# 5. Endpoints
-
-## Health check
-
-```http
-GET /health
-```
-
-Réponse :
-
-```json
-{
-  "status": "ok"
-}
-```
-
-Cet endpoint permet de vérifier rapidement que l'API fonctionne.
-
----
-
-## Prediction
-
-```http
-POST /predict
-```
-
-Exemple de requête :
-
-```json
-{
-  "EXT_SOURCE_3": 0.1595195404777181,
-  "CLOSED_AMT_CREDIT_SUM_DEBT_MEAN": 51881.85,
-  "CLOSED_AMT_CREDIT_SUM_DEBT_SUM": 62219.7,
-  "CLOSED_AMT_CREDIT_SUM_DEBT_MAX": 62219.7,
-  "BURO_DAYS_CREDIT_MEAN": -772.6666666666667,
-  "BURO_DAYS_CREDIT_ENDDATE_MIN": -435.4,
-  "CC_MONTHS_BALANCE_VAR": 732.6,
-  "BURO_DAYS_CREDIT_MIN": -1444.0,
-  "CLOSED_DAYS_CREDIT_ENDDATE_MIN": -876.6,
-  "ACTIVE_DAYS_CREDIT_MIN": -731.6,
-  "CC_AMT_PAYMENT_CURRENT_MIN": 7571.835,
-  "CC_AMT_PAYMENT_CURRENT_MEAN": 15395.9175,
-  "CC_AMT_DRAWINGS_POS_CURRENT_MIN": 694.602,
-  "REFUSED_APP_CREDIT_PERC_MEAN": 0.7886358501628111,
-  "REFUSED_APP_CREDIT_PERC_MIN": 0.7886358501628111,
-  "REFUSED_APP_CREDIT_PERC_MAX": 0.7886358501628111,
-  "APPROVED_APP_CREDIT_PERC_VAR": 0.00224587158067247,
-  "CC_AMT_PAYMENT_TOTAL_CURRENT_MIN": 4151.835,
-  "CC_AMT_PAYMENT_CURRENT_MAX": 23220.0,
-  "CC_AMT_PAYMENT_TOTAL_CURRENT_MEAN": 10998.657
-}
-```
-
-Exemple de réponse :
-
-```json
-{
-  "probability": 0.05686984283426618,
-  "prediction": 0,
-  "threshold": 0.082,
-  "latency_ms": 4.2
-}
-```
-
----
-
-# 6. Installation
-
-Le projet utilise `uv` pour la gestion de l'environnement Python et des dépendances.
-
-## Prérequis
-
-- Python 3.12
-- uv
-- Docker Desktop pour la conteneurisation
-
-Cloner le repository :
+### 1. Installer le projet et lancer l’API
 
 ```bash
 git clone https://github.com/PaulLARRIBET/P8.git
 cd P8
-```
-
-Installer les dépendances :
-
-```bash
-uv sync
-```
-
----
-
-# 7. Tests unitaires
-
-Les tests sont situés dans :
-
-```text
-tests/
-```
-
-Ils vérifient notamment :
-
-- que l'API répond correctement ;
-- que l'endpoint `/health` fonctionne ;
-- que `/predict` retourne une probabilité valide ;
-- que la classe obtenue est cohérente avec le seuil métier ;
-- que les prédictions sont identiques à une prédiction de référence.
-
-Une ligne réelle de test est stockée dans :
-
-```text
-tests/first_row.json
-```
-
-Ce fichier contient :
-
-- les features ;
-- la probabilité attendue ;
-- la classe attendue ;
-- le seuil attendu.
-
-Cela permet de réaliser un test de non-régression du modèle.
-
-## Lancer les tests
-
-```bash
-uv run pytest -v
-```
-
----
-
-# 8. Docker
-
-Le projet peut être exécuté dans un conteneur Docker.
-
-Le `Dockerfile` installe notamment :
-
-- Python 3.12 ;
-- les dépendances Python ;
-- LightGBM ;
-- `libgomp1`, nécessaire au fonctionnement de LightGBM sous Linux ;
-- le code de l'API ;
-- le modèle.
-
-## Construire l'image
-
-```bash
-docker build -t p8-credit-api .
-```
-
-## Lancer le conteneur
-
-```bash
-docker run --rm -p 8000:8000 p8-credit-api
-```
-
-L'API devient disponible sur :
-
-```text
-http://127.0.0.1:8000
-```
-
-Documentation Swagger :
-
-```text
-http://127.0.0.1:8000/docs
-```
-
----
-
-# 9. Monitoring des prédictions
-
-Chaque appel à `/predict` est enregistré dans une base SQLite :
-
-```text
-data/production.db
-```
-
-Les informations stockées incluent :
-
-- timestamp ;
-- données client ;
-- probabilité prédite ;
-- classe prédite ;
-- latence de l'API.
-
-Ces données permettent de suivre le comportement du modèle en production.
-
----
-
-# 10. Dashboard de monitoring
-
-Un dashboard Streamlit est disponible dans :
-
-```text
-monitoring/dashboard.py
-```
-
-Pour le lancer :
-
-```bash
-uv run streamlit run monitoring/dashboard.py
-```
-
-Il est ensuite accessible, généralement, sur :
-
-```text
-http://localhost:8501
-```
-
-Le dashboard permet de suivre :
-
-- le nombre total de prédictions ;
-- la répartition des classes prédites ;
-- la distribution des probabilités ;
-- la latence moyenne ;
-- la latence P95 ;
-- l'évolution des scores dans le temps ;
-- le Data Drift entre les données de référence et les données de production.
-
----
-
-# 11. Data Drift
-
-Le Data Drift correspond à une modification de la distribution des données reçues par le modèle par rapport aux données utilisées lors de son entraînement.
-
-Dans ce projet :
-
-```text
-X_train = données de référence
-X_test = données assimilées aux données de production
-```
-
-Le dataset de référence est stocké dans :
-
-```text
-data/reference.csv
-```
-
-Les données issues de `X_test` sont envoyées à l'API pour simuler l'utilisation réelle du modèle.
-
-Le drift est analysé variable par variable.
-
-Le dashboard compare les distributions de référence et de production à l'aide notamment du test statistique de Kolmogorov-Smirnov.
-
-Un drift détecté ne signifie pas automatiquement que le modèle est devenu mauvais. Il indique que les données rencontrées par le modèle ont changé et qu'une surveillance supplémentaire peut être nécessaire.
-
----
-
-# 12. Simulation des données de production
-
-Le script :
-
-```text
-scripts/send_x_test_to_api.py
-```
-
-permet d'envoyer automatiquement les observations de `X_test` à l'API.
-
-Pour l'utiliser, commencer par lancer l'API :
-
-```bash
+uv sync --frozen
 uv run uvicorn app.main:app --app-dir src --reload
 ```
 
-Puis, dans un autre terminal :
+Les fichiers `model/model.pkl`, `data/reference.csv` et `data/x_test.csv` doivent être présents pour utiliser l’ensemble de la démonstration.
+
+| Service | Adresse locale |
+|---|---|
+| API | http://127.0.0.1:8000 |
+| Documentation Swagger | http://127.0.0.1:8000/docs |
+| Vérification de disponibilité | http://127.0.0.1:8000/health |
+
+### 2. Générer les données de production
+
+Dans un deuxième terminal :
 
 ```bash
-uv run python scripts/send_x_test_to_api.py
+uv run python src/app/send_x_test_to_api.py
 ```
 
-Chaque observation est alors :
+Le script envoie les lignes de `data/x_test.csv` à `/predict`, une par une. Il affiche le nombre de succès et d’erreurs. Chaque prédiction réussie est enregistrée dans `data/production.db`, créée automatiquement au démarrage de l’API.
 
-1. envoyée à l'API ;
-2. scorée par le modèle ;
-3. enregistrée dans la base de monitoring.
+**Chaque nouvelle exécution ajoute des prédictions à l’historique**, y compris pour les clients déjà présents.
 
----
+### 3. Ouvrir le dashboard
 
-# 13. CI — GitHub Actions
-
-Le projet possède un pipeline d'intégration continue dans :
-
-```text
-.github/workflows/ci.yml
-```
-
-Le workflow est automatiquement déclenché :
-
-- à chaque push sur `main` ;
-- lors des pull requests vers `main`.
-
-La CI exécute notamment :
-
-```text
-Push GitHub
-    ↓
-Installation Python
-    ↓
-Installation des dépendances
-    ↓
-Tests Pytest
-    ↓
-Build de l'image Docker
-```
-
-Le build Docker ne se lance que si les tests sont passés avec succès.
-
-L'état du pipeline peut être consulté dans l'onglet `Actions` du repository GitHub.
-
----
-
-# 14. Historique Git
-
-Le projet a été construit progressivement et chaque étape importante fait l'objet d'un commit dédié.
-
-Exemples :
-
-```text
-Add trained model artifact
-Add initial project files
-Add initial FastAPI application
-Add API and model unit tests
-Add Docker containerization
-Add prediction monitoring and production logging
-Add monitoring dashboard and data drift analysis
-Add CI pipeline with tests and Docker build
-```
-
-L'historique complet est disponible dans la liste des commits GitHub.
-
----
-
-# 15. Explicabilité du modèle
-
-Le modèle LightGBM peut également être expliqué localement grâce à SHAP.
-
-L'objectif est de comprendre, pour une prédiction individuelle, quelles variables ont le plus contribué au score obtenu.
-
-Une explication locale peut notamment inclure :
-
-- le nom de la feature ;
-- sa valeur pour le client ;
-- sa valeur SHAP ;
-- son importance locale.
-
-Un graphique SHAP de type waterfall peut également être utilisé dans le dashboard pour visualiser les contributions positives et négatives des différentes variables.
-
----
-
-# 16. Technologies utilisées
-
-```text
-Python 3.12
-FastAPI
-Uvicorn
-LightGBM
-scikit-learn
-pandas
-NumPy
-SHAP
-Streamlit
-Plotly
-SciPy
-SQLite
-Pytest
-Docker
-GitHub Actions
-uv
-```
-
----
-
-# 17. Lancement rapide
-
-## API locale
-
-```bash
-uv sync
-
-uv run uvicorn app.main:app \
-    --app-dir src \
-    --reload
-```
-
-Puis ouvrir :
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-## Tests
-
-```bash
-uv run pytest -v
-```
-
-## Docker
-
-```bash
-docker build -t p8-credit-api .
-
-docker run --rm \
-    -p 8000:8000 \
-    p8-credit-api
-```
-
-## Monitoring
+Dans un troisième terminal :
 
 ```bash
 uv run streamlit run monitoring/dashboard.py
 ```
 
----
+Le dashboard est généralement accessible à l’adresse http://localhost:8501. L’API doit rester disponible pour obtenir les explications locales. Une base initialisée contenant au moins une prédiction est nécessaire pour afficher le dashboard complet.
 
-# Repository
+## Architecture
 
-GitHub :
-
-```text
-https://github.com/PaulLARRIBET/P8
+```mermaid
+flowchart LR
+    T["x_test.csv / client API"] --> A["FastAPI"]
+    M["model.pkl : pipeline + seuil"] --> A
+    A --> P["Score et classe prédite"]
+    A --> B[("production.db")]
+    B --> D["Dashboard Streamlit"]
+    R["reference.csv : entraînement"] --> D
+    M --> D
+    D --> E["Drift et SHAP global"]
+    D -->|POST /explain| A
+    A --> L["SHAP local"]
 ```
 
----
+```text
+P8/
+├── .github/workflows/ci.yml      # Tests puis construction Docker
+├── data/
+│   ├── reference.csv             # Données d’entraînement de référence
+│   ├── x_test.csv                # Données de simulation de production
+│   └── production.db             # Historique local généré, ignoré par Git
+├── model/
+│   └── model.pkl                # Pipeline entraîné et seuil métier
+├── monitoring/
+│   └── dashboard.py             # Interface Streamlit
+├── src/app/
+│   ├── __init__.py
+│   ├── main.py                  # Routes FastAPI et validation des entrées
+│   ├── model.py                 # Inférence et explications SHAP locales
+│   ├── monitoring.py            # Initialisation et écriture SQLite
+│   └── send_x_test_to_api.py     # Simulation de requêtes client
+├── tests/
+│   ├── first_row.json           # Cas de référence et résultats attendus
+│   ├── test_api.py
+│   └── test_model.py
+├── model.py                     # Script d’inspection de l’artefact
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── .python-version
+├── pyproject.toml               # Dépendances et configuration Pytest
+├── uv.lock                      # Versions verrouillées
+└── README.md
+```
 
-# Auteur
+## Données et modèle
 
-Paul Larribet
+### Jeux de données
+
+| Fichier | Contenu actuel | Usage |
+|---|---|---|
+| `data/reference.csv` | 10 000 lignes, 20 variables et `SK_ID_CURR` | Référence issue de l’entraînement, drift et SHAP global |
+| `data/x_test.csv` | 10 000 lignes, 20 variables et `SK_ID_CURR` | Simulation de clients en production |
+| `data/production.db` | Historique alimenté par l’API | Monitoring et sélection des clients |
+
+Les CSV contiennent des variables déjà préparées. Le code d’inférence attend ces agrégats directement : il ne reconstruit pas les variables à partir des données brutes de crédit.
+
+`SK_ID_CURR` identifie le client et **n’est jamais envoyé au modèle comme variable prédictive**.
+
+### Pipeline de classification
+
+L’artefact `model/model.pkl`, chargé avec Joblib, contient :
+
+```python
+artifact = {
+    "model": pipeline,       # Pipeline imbalanced-learn : SMOTE puis LightGBM
+    "threshold": 0.508,      # Seuil de l’artefact actuellement fourni
+}
+```
+
+SMOTE intervient pendant l’entraînement. Lors de l’inférence, le pipeline utilise le classifieur LightGBM sans générer de nouvelles observations.
+
+Le modèle fourni comporte **19 arbres**, une profondeur maximale de **3** et un taux d’apprentissage d’environ **0,044**. Le dépôt fournit le modèle entraîné ; il ne contient pas actuellement de procédure complète pour reproduire son entraînement et son optimisation.
+
+### Variables utilisées
+
+L’ordre des colonnes est reconstruit à partir de `model.feature_names_in_` avant la prédiction.
+
+```text
+APPROVED_APP_CREDIT_PERC_VAR
+CC_AMT_DRAWINGS_POS_CURRENT_SUM
+CC_AMT_DRAWINGS_POS_CURRENT_MAX
+CC_AMT_PAYMENT_CURRENT_SUM
+CC_AMT_PAYMENT_TOTAL_CURRENT_SUM
+CC_AMT_PAYMENT_TOTAL_CURRENT_MEAN
+CC_AMT_PAYMENT_TOTAL_CURRENT_MAX
+CC_AMT_PAYMENT_TOTAL_CURRENT_MIN
+CC_AMT_DRAWINGS_POS_CURRENT_MEAN
+CC_AMT_PAYMENT_CURRENT_MEAN
+CC_AMT_PAYMENT_CURRENT_MAX
+CC_AMT_PAYMENT_CURRENT_MIN
+CLOSED_DAYS_CREDIT_ENDDATE_MIN
+CC_AMT_DRAWINGS_CURRENT_MAX
+CC_AMT_DRAWINGS_CURRENT_SUM
+CC_AMT_DRAWINGS_CURRENT_MEAN
+CC_AMT_DRAWINGS_POS_CURRENT_MIN
+CC_AMT_DRAWINGS_CURRENT_MIN
+CLOSED_DAYS_CREDIT_MEAN
+EXT_SOURCE_3
+```
+
+### Score et seuil métier
+
+```python
+probability = model.predict_proba(X)[0, 1]
+prediction = int(probability >= threshold)
+```
+
+La classe **1** représente le risque de défaut ; la classe **0** correspond à un score inférieur au seuil. Le seuil actuellement enregistré est **0,508**. Le code utilise toujours la valeur contenue dans l’artefact, sans la fixer dans le calcul de prédiction.
+
+La démarche métier décrite dans le projet repose sur le coût `10 × FN + FP`, où un faux négatif est considéré comme dix fois plus coûteux qu’un faux positif. Le calcul d’optimisation de ce seuil n’est pas exécuté par l’API.
+
+Le taux de classe 1 affiché dans le dashboard est la proportion de décisions positives enregistrées. Il ne mesure ni la précision du modèle, ni le taux réel de défaut. Les scores retournés ne sont pas accompagnés d’une étape de calibration dans le code fourni.
+
+## API et exemples
+
+### Routes disponibles
+
+| Méthode | Route | Réponse et effet |
+|---|---|---|
+| `GET` | `/` | Message d’accueil |
+| `GET` | `/health` | `{"status": "ok"}` |
+| `POST` | `/predict` | Score, classe, seuil et latence ; enregistrement SQLite |
+| `POST` | `/explain` | Explication SHAP locale ; aucun ajout à l’historique des prédictions |
+
+Les deux routes `POST` utilisent le même schéma de données client. Pydantic vérifie notamment que l’identifiant est positif, que `EXT_SOURCE_3` est compris entre 0 et 1, que les montants et la variance sont positifs ou nuls, et que `CLOSED_DAYS_CREDIT_MEAN` est négatif ou nul. Une entrée ne respectant pas le schéma renvoie une erreur **422**.
+
+### Tester une prédiction
+
+Le fichier `tests/first_row.json` contient un client complet ainsi que les résultats attendus. Pour envoyer uniquement ses caractéristiques :
+
+```bash
+uv run python - <<'PY'
+import json
+from pathlib import Path
+import requests
+
+client = json.loads(Path("tests/first_row.json").read_text())["features"]
+response = requests.post("http://127.0.0.1:8000/predict", json=client, timeout=10)
+response.raise_for_status()
+print(json.dumps(response.json(), indent=2))
+PY
+```
+
+Réponse pour le modèle fourni, avec une latence illustrative :
+
+```json
+{
+  "SK_ID_CURR": 100001,
+  "probability": 0.5865516664193919,
+  "prediction": 1,
+  "threshold": 0.508,
+  "latency_ms": 2.5
+}
+```
+
+La latence mesurée couvre la préparation et le calcul de la prédiction. Elle exclut l’écriture SQLite, le transport réseau et le calcul SHAP.
+
+### Demander une explication locale
+
+Envoyer les mêmes caractéristiques à `POST /explain`. La réponse contient :
+
+| Champ | Description |
+|---|---|
+| `SK_ID_CURR` | Identifiant client |
+| `base_value` | Valeur de base de l’explication SHAP |
+| `feature_names` | Noms des 20 variables |
+| `feature_values` | Valeurs des variables pour ce client |
+| `shap_values` | Contributions dans le même ordre |
+| `local_feature_importance` | Variables triées par valeur absolue de leur contribution |
+
+Chaque importance locale comporte `feature`, `value`, `shap_value` et `importance`. Le calcul SHAP est séparé de `/predict` pour ne pas l’effectuer à chaque demande de score.
+
+## Dashboard de monitoring
+
+### Activité et scores
+
+Le dashboard affiche le nombre de prédictions, la proportion de classe 1, la latence moyenne et le percentile 95 de latence. Des graphiques présentent la distribution des scores, la répartition des classes, l’évolution des scores dans le temps et la distribution des latences.
+
+Les indicateurs portent sur **tout l’historique enregistré**, sans filtre de période. Un client envoyé plusieurs fois contribue donc plusieurs fois aux statistiques.
+
+### Dérive des données
+
+Evidently compare les variables communes entre `reference.csv` et les données de production, en excluant `SK_ID_CURR`.
+
+L’interface présente le nombre de variables analysées, la proportion de variables présentant une dérive, ainsi que le test, le score et le seuil statistique utilisés pour chacune. Un sélecteur permet aussi de superposer les distributions d’une variable dans les deux jeux de données.
+
+Les tests sont sélectionnés par `DataDriftPreset` : il ne s’agit pas d’un test unique fixé pour toutes les variables. Une dérive signale une différence de distribution ; elle ne démontre pas à elle seule une dégradation des performances prédictives.
+
+### Historique SQLite
+
+Chaque appel réussi à `/predict` ajoute une ligne dans la table `predictions` :
+
+| Colonne | Contenu |
+|---|---|
+| `id` | Identifiant interne de la prédiction |
+| `timestamp` | Horodatage UTC |
+| `features` | Données client sérialisées en JSON, identifiant compris |
+| `probability` | Score de classe 1 |
+| `prediction` | Classe calculée au moment de la requête |
+| `latency_ms` | Temps de calcul mesuré par l’API |
+
+La base ne conserve actuellement ni la version du modèle ni le seuil utilisé pour chaque ligne. Remplacer le modèle ou son seuil ne recalcule pas les décisions historiques.
+
+## Explicabilité SHAP
+
+### Explicabilité globale — données d’entraînement
+
+La section globale utilise **toutes les lignes disponibles dans `data/reference.csv`**, soit 10 000 lignes dans le fichier fourni. Elle explique le modèle actuel sur ces données de référence.
+
+Deux représentations sont proposées :
+
+- **Importance globale** : moyenne des valeurs absolues SHAP pour chaque variable ;
+- **Sens et dispersion des contributions** : graphique de synthèse montrant les contributions individuelles et leur relation avec les valeurs des variables.
+
+Le calcul est réalisé directement dans le dashboard à partir de `model.pkl`, puis mis en cache. La date de modification du modèle participe à l’invalidation de ce cache.
+
+### Explicabilité locale — client sélectionné
+
+Le menu **ID_Client** permet de sélectionner un client ou de taper son identifiant pour le rechercher parmi les clients présents en production. En cas de plusieurs prédictions pour un même client, la plus récente est retenue.
+
+L’interface affiche son score et sa classe enregistrés. Le bouton **Afficher l’explication SHAP** appelle ensuite `/explain` avec les caractéristiques de ce client pour afficher les dix variables les plus influentes et un graphique **waterfall**.
+
+### Lire les contributions
+
+Les explications sont calculées sur le LightGBM et exprimées en **log-odds** :
+
+- une contribution positive augmente le score de classe 1 ;
+- une contribution négative le diminue ;
+- la valeur de base et la somme des contributions reconstruisent le score brut, avant sa transformation en probabilité.
+
+Dans le graphique global, le rouge correspond à une valeur élevée de la variable et le bleu à une valeur faible. Les contributions expliquent le comportement du modèle ; elles n’établissent pas une relation causale.
+
+## Tests et intégration continue
+
+### Exécuter les tests
+
+```bash
+uv run pytest -v
+```
+
+Les tests couvrent la disponibilité de l’API, les prédictions du modèle et de l’API par rapport au cas de référence, le seuil et la classe attendus, le rejet de certaines données invalides, ainsi que la structure des explications locales.
+
+`tests/first_row.json` doit rester cohérent avec l’artefact livré : après un changement de modèle ou de seuil, les valeurs attendues doivent être revérifiées.
+
+Les tests de `/predict` journalisent également leurs requêtes dans la base configurée par l’application, actuellement `data/production.db`.
+
+### Pipeline GitHub Actions
+
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) est déclenché sur les push vers `main` et les pull requests ciblant `main`.
+
+```text
+Checkout → Python 3.12 → Installation uv → uv sync --frozen → Pytest
+                                                               ↓
+                                                    Construction Docker
+```
+
+Le job Docker dépend du succès des tests. Il construit l’image ; le workflow ne publie pas d’image et ne déploie pas l’application.
+
+## Exécution avec Docker
+
+### Construire l’image de l’API
+
+```bash
+docker build -t p8-credit-api .
+```
+
+L’image utilise Python 3.12 Slim, installe `libgomp1` pour LightGBM et les dépendances verrouillées sans les dépendances de développement. Elle embarque le code de l’API et le modèle.
+
+### Lancer l’API avec une base partagée
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  --mount "type=bind,source=$(pwd)/data,target=/app/data" \
+  p8-credit-api
+```
+
+Le montage conserve la base sur la machine hôte et permet au dashboard lancé localement de lire les prédictions du conteneur. Le dashboard et les CSV ne sont pas inclus dans l’image actuelle.
+
+Sans montage, la base reste dans le conteneur et est perdue lorsque celui-ci est supprimé. L’API et sa documentation restent accessibles aux mêmes adresses locales que lors d’une exécution sans Docker.
+
+## Actualisation et dépannage
+
+| Situation | Explication et action |
+|---|---|
+| Le dashboard ne reflète pas les dernières requêtes | Les données sont mises en cache avec `st.cache_data`. Utiliser **⋮ → Clear cache**, puis relancer l’affichage. |
+| Le modèle ou le seuil a été remplacé | Redémarrer l’API pour recharger `model.pkl`. Les anciennes lignes SQLite conservent leurs résultats d’origine. |
+| Le taux de classe 1 paraît inattendu | Il représente les classes enregistrées sur tout l’historique. Vérifier le seuil réellement chargé, les scores et les éventuelles simulations répétées. |
+| L’explication locale échoue | Vérifier que l’API est disponible à `http://127.0.0.1:8000` et que les caractéristiques du client respectent son schéma. |
+| Aucun historique n’est disponible | Démarrer l’API puis envoyer une prédiction ou lancer le script de simulation avant d’utiliser le dashboard. |
+| Le fichier de référence a changé | Vider le cache Streamlit pour recharger le CSV et recalculer les résultats associés. |
+
+L’explication locale utilise le modèle actuellement chargé dans l’API, tandis que le score affiché provient de l’historique. Pour comparer ces éléments, conserver la même version du modèle pour la génération des prédictions et leur explication.
+
+## Auteur
+
+**Paul Larribet** — Projet OpenClassrooms P8  
+[Dépôt GitHub](https://github.com/PaulLARRIBET/P8)

@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-
 client = TestClient(app)
 
 JSON_PATH = Path(__file__).parent / "first_row.json"
@@ -31,6 +30,10 @@ def test_predict():
 
     result = response.json()
 
+    assert result["SK_ID_CURR"] == int(
+        expected["features"]["SK_ID_CURR"]
+    )
+
     assert abs(
         result["probability"] - expected["predict_proba"]
     ) < 1e-6
@@ -41,8 +44,11 @@ def test_predict():
         result["threshold"] - expected["threshold"]
     ) < 1e-12
 
-def test_negative_amount_rejected():
+    assert "latency_ms" in result
+    assert result["latency_ms"] >= 0
 
+
+def test_negative_amount_rejected():
     with open(JSON_PATH, "r") as f:
         expected = json.load(f)
 
@@ -57,8 +63,8 @@ def test_negative_amount_rejected():
 
     assert response.status_code == 422
 
-def test_ext_source_out_of_range():
 
+def test_ext_source_out_of_range():
     with open(JSON_PATH, "r") as f:
         expected = json.load(f)
 
@@ -72,3 +78,32 @@ def test_ext_source_out_of_range():
     )
 
     assert response.status_code == 422
+
+
+def test_explain():
+    with open(JSON_PATH, "r") as f:
+        expected = json.load(f)
+
+    response = client.post(
+        "/explain",
+        json=expected["features"]
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["SK_ID_CURR"] == int(
+        expected["features"]["SK_ID_CURR"]
+    )
+
+    assert "base_value" in result
+    assert "feature_names" in result
+    assert "feature_values" in result
+    assert "shap_values" in result
+    assert "local_feature_importance" in result
+
+    assert len(result["feature_names"]) == 20
+    assert len(result["feature_values"]) == 20
+    assert len(result["shap_values"]) == 20
+    assert len(result["local_feature_importance"]) == 20

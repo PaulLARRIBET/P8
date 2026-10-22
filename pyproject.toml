@@ -8,9 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "evidently>=0.4.36",
     "fastapi>=0.142.2",
+    "imbalanced-learn>=0.14.2",
     "joblib>=1.6.0",
     "lightgbm>=4.7.0",
+    "matplotlib>=3.11.2",
     "pandas>=3.0.6",
     "plotly>=7.1.0",
     "scikit-learn>=1.9.1",
