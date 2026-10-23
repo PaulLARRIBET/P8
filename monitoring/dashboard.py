@@ -18,6 +18,8 @@ API_URL = "http://127.0.0.1:8000"
 DB_PATH = ROOT / "data" / "production.db"
 REFERENCE_PATH = ROOT / "data" / "reference.csv"
 MODEL_PATH = ROOT / "model" / "model.pkl"
+DRIFT_TRAIN_PATH = ROOT / "data" / "X_train_before_kNN.csv"
+DRIFT_TEST_PATH = ROOT / "data" / "X_test_before_kNN.csv"
 
 
 st.set_page_config(
@@ -31,6 +33,11 @@ st.title("Credit Scoring - Monitoring")
 @st.cache_data
 def load_reference():
     return pd.read_csv(REFERENCE_PATH)
+
+
+@st.cache_data
+def load_drift_data(path, file_version):
+    return pd.read_csv(path)
 
 
 @st.cache_data
@@ -213,6 +220,10 @@ st.plotly_chart(
 # =========================
 
 st.header("Data Drift")
+st.caption(
+    "Comparaison de X_train_before_kNN.csv (référence) et "
+    "X_test_before_kNN.csv (test), avant imputation kNN."
+)
 
 feature_columns = [
     col
@@ -221,19 +232,25 @@ feature_columns = [
     and col != "SK_ID_CURR"
 ]
 
-if not feature_columns:
+drift_train = load_drift_data(DRIFT_TRAIN_PATH, DRIFT_TRAIN_PATH.stat().st_mtime_ns)
+drift_test = load_drift_data(DRIFT_TEST_PATH, DRIFT_TEST_PATH.stat().st_mtime_ns)
+drift_columns = [
+    col for col in drift_train.columns
+    if col in drift_test.columns and col != "SK_ID_CURR"
+]
+
+if not drift_columns:
     st.warning(
-        "Aucune feature commune entre les données de référence "
-        "et les données de production."
+        "Aucune feature commune entre les fichiers train et test avant kNN."
     )
     st.stop()
 
-reference_drift = reference[
-    feature_columns
+reference_drift = drift_train[
+    drift_columns
 ].copy()
 
-production_drift = production[
-    feature_columns
+production_drift = drift_test[
+    drift_columns
 ].copy()
 
 report = Report(
@@ -368,14 +385,14 @@ st.subheader(
 
 selected_feature = st.selectbox(
     "Feature",
-    feature_columns
+    drift_columns
 )
 
 comparison = pd.DataFrame({
-    "reference": reference[
+    "Entraînement avant kNN": reference_drift[
         selected_feature
     ].dropna(),
-    "production": production[
+    "Test avant kNN": production_drift[
         selected_feature
     ].dropna()
 })
