@@ -71,11 +71,22 @@ Le script envoie les lignes de `data/x_test.csv` à `/predict`, une par une. Il 
 
 Dans un troisième terminal :
 
+Définir le mot de passe du dashboard dans la session du terminal (zsh, sur macOS). La saisie est masquée :
+
+```zsh
+read -s 'DASHBOARD_PASSWORD?Mot de passe du dashboard : '
+export DASHBOARD_PASSWORD
+```
+
+Puis lancer Streamlit depuis ce même terminal :
+
 ```bash
 uv run streamlit run monitoring/dashboard.py
 ```
 
 Le dashboard est généralement accessible à l’adresse http://localhost:8501. L’API doit rester disponible pour obtenir les explications locales. Une base initialisée contenant au moins une prédiction est nécessaire pour afficher le dashboard complet.
+
+L’accès nécessite le mot de passe défini dans `DASHBOARD_PASSWORD`. Sans cette variable, le dashboard reste verrouillé. Le bouton **Se déconnecter** termine la session d’accès. Le mot de passe est partagé entre les utilisateurs et doit être redéfini dans chaque nouveau terminal de lancement ; ne pas l’enregistrer dans Git. Cette protection concerne le dashboard : elle ne chiffre pas SQLite et n’authentifie pas l’API. Pour un accès distant, servir le dashboard en HTTPS afin de protéger la saisie du mot de passe.
 
 ## Architecture
 

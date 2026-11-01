@@ -1,5 +1,8 @@
 from pathlib import Path
 import json
+import os
+import hmac
+import hashlib
 import sqlite3
 import pandas as pd
 import plotly.express as px
@@ -26,6 +29,42 @@ st.set_page_config(
     page_title="Credit Scoring Monitoring",
     layout="wide"
 )
+
+
+def require_dashboard_password():
+    expected_password = os.environ.get("DASHBOARD_PASSWORD")
+    if not expected_password:
+        st.error("L’accès au dashboard n’est pas configuré. Définissez DASHBOARD_PASSWORD sur le serveur.")
+        st.stop()
+
+    password_version = hashlib.sha256(expected_password.encode()).hexdigest()
+    if hmac.compare_digest(
+        st.session_state.get("authenticated_password_version", ""), password_version
+    ):
+        if st.sidebar.button("Se déconnecter"):
+            st.session_state.pop("authenticated_password_version", None)
+            st.rerun()
+        return
+
+    def check_password():
+        entered_password = st.session_state.pop("dashboard_login_password", "")
+        valid = hmac.compare_digest(
+            entered_password.encode(), expected_password.encode()
+        )
+        st.session_state["dashboard_login_failed"] = not valid
+        if valid:
+            st.session_state["authenticated_password_version"] = password_version
+
+    st.title("Connexion au dashboard")
+    with st.form("dashboard_login"):
+        st.text_input("Mot de passe", type="password", key="dashboard_login_password")
+        st.form_submit_button("Se connecter", on_click=check_password)
+    if st.session_state.get("dashboard_login_failed", False):
+        st.error("Mot de passe incorrect.")
+    st.stop()
+
+
+require_dashboard_password()
 
 st.title("Credit Scoring - Monitoring")
 
@@ -71,8 +110,17 @@ def load_production():
     return df
 
 
+def delete_prediction(prediction_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM predictions WHERE id = ?", (int(prediction_id),))
+    load_production.clear()
+
+
 reference = load_reference()
 production = load_production()
+
+if st.session_state.pop("prediction_deleted", False):
+    st.success("La prédiction a été supprimée.")
 
 
 if production.empty:
@@ -407,6 +455,72 @@ st.plotly_chart(
     fig_feature,
     use_container_width=True
 )
+
+# =========================
+# Historique des prédictions
+# =========================
+
+st.header("Historique des prédictions")
+client_search = st.selectbox(
+    "Rechercher par ID_Client",
+    [None] + sorted(production["SK_ID_CURR"].astype(int).unique().tolist()),
+    format_func=lambda value: "Tous les clients" if value is None else str(value),
+    help="Sélectionnez un identifiant ou tapez son numéro pour le rechercher.",
+    key="history_client_search",
+)
+
+filtered_predictions = production.sort_values(
+    ["timestamp", "id"], ascending=False
+)
+if client_search is not None:
+    filtered_predictions = filtered_predictions.loc[
+        filtered_predictions["SK_ID_CURR"] == client_search
+    ]
+
+st.caption(f"{len(filtered_predictions):,} prédiction(s) trouvée(s).")
+if filtered_predictions.empty:
+    st.info("Aucune prédiction ne correspond à votre recherche.")
+else:
+    page_size = 25
+    page_count = (len(filtered_predictions) + page_size - 1) // page_size
+    page = st.selectbox("Page", range(1, page_count + 1))
+    displayed_predictions = filtered_predictions.iloc[
+        (page - 1) * page_size:page * page_size
+    ]
+    with st.container(height=500, border=True):
+        headers = st.columns([1, 1.3, 2, 1.2, 0.8, 1.2, 1.5])
+        for column, label in zip(
+            headers,
+            ["Prédiction", "ID_Client", "Date (UTC)", "Probabilité", "Classe", "Latence", "Action"],
+        ):
+            column.markdown(f"**{label}**")
+        for _, row in displayed_predictions.iterrows():
+            prediction_id = int(row["id"])
+            cells = st.columns([1, 1.3, 2, 1.2, 0.8, 1.2, 1.5])
+            values = [
+                str(prediction_id), str(int(row["SK_ID_CURR"])),
+                row["timestamp"].strftime("%d/%m/%Y %H:%M:%S"),
+                f"{row['probability']:.4f}", str(int(row["prediction"])),
+                f"{row['latency_ms']:.2f} ms",
+            ]
+            for cell, value in zip(cells, values):
+                cell.write(value)
+            if cells[-1].button("Supprimer", key=f"delete_prediction_{prediction_id}"):
+                try:
+                    delete_prediction(prediction_id)
+                except sqlite3.Error:
+                    st.error("La suppression a échoué. Réessayez dans quelques instants.")
+                else:
+                    st.session_state["prediction_deleted"] = True
+                    st.rerun()
+            with st.expander(f"Données client — prédiction {prediction_id}"):
+                st.dataframe(
+                    row.drop(labels=["id", "timestamp", "probability", "prediction", "latency_ms"])
+                    .rename("Valeur").to_frame(),
+                    use_container_width=True,
+                )
+            st.divider()
+
 
 # =========================
 # Explicabilité globale SHAP
