@@ -20,7 +20,7 @@ app = FastAPI(
 
 init_db()
 
-
+# commentaire
 class ClientData(BaseModel):
 
     SK_ID_CURR: int = Field(gt=0)
